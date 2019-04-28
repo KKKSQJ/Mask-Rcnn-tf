@@ -3,11 +3,11 @@
 
 class Config:
     # seed_data_list set param
-    dataset_classes_name = ['box_0', 'box_1', 'soft_0', 'soft_1', 'envelope_0', 'envelope_1']
-    dataset_out_path = '/home/kingqi/proj/data/mask-rcnn/test_d'
-    #Background image 背景必须跟设置的图片大小相同
-    bg_list = '/home/kingqi/proj/Mask_RCNN/gen_data/bg_im.list'
-    fg_list = '/home/kingqi/proj/Mask_RCNN/gen_data/org_label.list'
+    dataset_classes_name = ['box_0', 'box_1', 'soft_0', 'soft_1', 'envelope_0', 'envelope_1']  #类标签
+    dataset_out_path = '/home/kingqi/proj/data/mask-rcnn/test_d'  #数据输出路径
+
+    bg_list = '/home/kingqi/proj/Mask_RCNN/gen_data/bg_im.list'   #背景.list的绝对路径，每行一个bg_image的路径信息
+    fg_list = '/home/kingqi/proj/Mask_RCNN/gen_data/org_label.list'  #前景.list的绝对路径，每行一个fg_image的路径信息
     #Image param
     Image_num = 8
     Image_width = 1100
