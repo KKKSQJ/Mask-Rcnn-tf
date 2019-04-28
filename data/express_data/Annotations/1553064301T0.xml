@@ -1,0 +1,31 @@
+<annotation>
+	<folder>org</folder>
+	<filename>1553064301T0.jpg</filename>
+	<path>F:\20190312_express\org\1553064301T0.jpg</path>
+	<source>
+		<database>Unknown</database>
+	</source>
+	<size>
+		<width>1920</width>
+		<height>1200</height>
+		<depth>3</depth>
+	</size>
+	<segmented>0</segmented>
+	<object>
+		<name>box_0</name>
+		<pose>Unspecified</pose>
+		<truncated>0</truncated>
+		<difficult>0</difficult>
+		<bndbox>
+			<len>4</len>
+			<x0>899</x0>
+			<y0>396</y0>
+			<x1>1106</x1>
+			<y1>420</y1>
+			<x2>1081</x2>
+			<y2>720</y2>
+			<x3>874</x3>
+			<y3>706</y3>
+		</bndbox>
+	</object>
+</annotation>
