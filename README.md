@@ -22,6 +22,7 @@ python run demo.py
 * balloon, coco, nucleus, shape的使用参见Mask-RCNN官网，其中shape/train_shape.py 从数据产生->训练->测试>MAP
 
 # 训练自己的模型
+* aff_data:对图像进行形态的数据增强,即多形态!!!!
 * 见sample/express/train_express.py文件
 * data/data_generate.py:产生训练数据
 * data/data_config.py:数据的配置信息
