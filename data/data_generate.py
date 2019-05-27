@@ -13,6 +13,8 @@ import imgaug as ia
 from data_config import Config as cfg
 from functools import wraps
 from data_utils import *
+import math
+from coco_io import COCOWrite
 
 
 #时间函数
@@ -96,6 +98,7 @@ class seed_fg:
         """
         try:
             im = cv2.imread(path)
+            im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
 
             # import matplotlib.pyplot as plt
             # plt.imshow(im)
@@ -166,22 +169,25 @@ class seed_fg:
             shapes.append(_example['label']['shape'])
         return np.array(images), np.array(class_ids), np.array(shapes)
 
-    def interpret_example_all_class(self, num):
+    def interpret_example_all_class(self, num, p):
         """
         从所有样本中随机选取,不根据类名
         :param num:选取样本的个数
         :return:
         """
+        np.random.seed(p)
         ids = np.random.choice(np.arange(self.__len__()), num)
+        #print(ids)
         return self.__interpret_example(ids)
 
-    def interpret_example_class(self, str, num):
+    def interpret_example_class(self, str, num,p):
         """
         根据类名随机选择num个样本
         :param c:类别字符串
         :param num:选这个类的num的样本
         :return:
         """
+        np.random.seed(p)
         ids = np.random.choice(self.classname_ids[str], num)
         return self.__interpret_example(ids)
 
@@ -214,7 +220,7 @@ class seed_bg():
             path = path[0]
             try:
                 bg = cv2.imread(path)
-
+                bg = cv2.cvtColor(bg, cv2.COLOR_BGR2RGB)
                 # import matplotlib.pyplot as plt
                 # bg = bg[:, :, ::-1]
                 # plt.imshow(bg)
@@ -250,7 +256,9 @@ class Sample(object):
         self.__shapes=self.__shapes2points(shapes) #把标注信息转换为点信息
         self.__bg=bg #获得背景列表
         self.__bboxes = self.__shapes2boxs(self.__shapes) #把点信息转化为框信息
-        self.__aug_objects() #数据增强(旋转+缩放)
+        #self.__aug_objects() #数据增强(旋转+缩放)
+        #self.__aug_object_img()
+        self.__cv_aug()
         self.__simplify_object_info() #把objects统一移到图像左上角
         self.__transform_objects() #随机放置objects位置
         self.__generate_image() #生成图片
@@ -277,7 +285,7 @@ class Sample(object):
             keypoints_on_images.append(ia.KeypointsOnImage(keypoints, shape=image.shape))
 
         self.__images = seq_det.augment_images(self.__images)
-        keypoints_on_images=seq_det.augment_keypoints(keypoints_on_images)
+        keypoints_on_images = seq_det.augment_keypoints(keypoints_on_images)
 
         n_shapes =[]
         bboxs=[]
@@ -288,9 +296,88 @@ class Sample(object):
             n_shapes.append(shape)
             bboxs.append(self.__shape2box(shape))
         #update shapes
-        self.__shapes=n_shapes
+        self.__shapes = n_shapes
         #update bboxs
         self.__bboxes = bboxs
+
+    def __aug_object_img(self):
+        bboxs = []
+        for i, image in enumerate(self.__images):
+            for p in self.__shapes:
+                bboxs.append(self.__shape2box(p))
+        self.__bboxes = bboxs
+
+    def calculatePoint(self, point, w, h, angle, rate, nw, nh):
+        # 计算原图当中的旋转中心，并将之设为原图当中的原点
+        cx = w // 2
+        cy = h // 2
+        # 计算基于新的原点的坐标，图片当中的默认坐标原点是左上
+        new_center_x = point[0] - cx
+        new_center_y = cy - point[1]
+        # 计算当前点到新的原点，也就是旋转中心的距离
+        lenth_p = math.sqrt(pow(new_center_x, 2) + pow(new_center_y, 2))
+        # 在原图当中，坐标点与旋转中心连线与x轴正向的夹角
+        origin_angle = math.degrees(math.atan2(new_center_y, new_center_x))
+        # 旋转一定角度之后，坐标点与旋转中心连线与x轴正向的夹角
+        new_angle = origin_angle + angle
+        # 方便计算，把角度转为正负180度
+        if new_angle > 180:
+            new_angle -= 360
+        # 原图如果发生缩放，在原图当中的直线也发生缩放
+        lenth_p = lenth_p * rate
+        # 使用角度与边长，计算到x轴和y轴的距离
+        new_x = math.cos(math.radians(new_angle)) * lenth_p
+        new_y = math.sin(math.radians(new_angle)) * lenth_p
+        # 将坐标轴从旋转中心换回左上
+        new_cx = nw // 2
+        new_cy = nh // 2
+        nx = int(new_x + new_cx)
+        ny = int(new_cy - new_y)
+        return nx, ny
+
+    def get_new_points(self, pts, w, h, angle, scale):
+        new_pts = []
+        for i in range(4):
+            nx, ny = self.calculatePoint(pts[i], w, h, angle, scale, w, h)
+            if nx < 0 or ny < 0 or nx > w or ny > h:
+                new_pts = []
+            else:
+                new_pts.append((nx, ny))
+
+        return new_pts if len(new_pts) == 4 else []
+
+    def __cv_aug(self):
+        new_images = []
+        new_shapes = []
+        new_bboxs = []
+        for i, image in enumerate(self.__images):
+            (h, w) = image.shape[:2]
+
+            angle = np.random.randint(cfg.Image_rotate[0], cfg.Image_rotate[1])
+            scale = np.random.uniform(cfg.Image_affine_scale[0], cfg.Image_affine_scale[1])
+            new_pts = self.get_new_points(self.__shapes[i], w, h, angle, scale)
+            #print(new_pts)
+
+            if new_pts:
+                new_shapes.append(new_pts)
+                new_bboxs.append(self.__shape2box(new_pts))
+                #print(new_pts)
+
+                RotateMatrix = cv2.getRotationMatrix2D(center=(image.shape[1] / 2, image.shape[0] / 2), angle=angle,
+                                                           scale=scale)
+                RotImg = cv2.warpAffine(image, RotateMatrix, (image.shape[1], image.shape[0]))
+                new_images.append(RotImg)
+
+                # print("shape = {}".format((RotImg.shape)))
+            else:
+                continue
+        new_images = np.array(new_images)
+        self.__images = new_images
+        self.__shapes = new_shapes
+        self.__bboxes = new_bboxs
+
+
+
 
     def __simplify_object_info(self):
         """
@@ -324,31 +411,11 @@ class Sample(object):
         new_bboxs= []
         for tl, bbox in zip(self.__tls, self.__bboxes):
             new_bboxs.append(self.__box_translation(bbox, tl))
-
-        if cfg.use_nms_flag:
-            keep_ixs = non_max_suppression_sort(
-                np.array(new_bboxs), np.arange(len(new_bboxs)), cfg.im_nms, cfg.im_union_ratio)
-
-            cls = [c for i, c in enumerate(self.__class_ids) if i in keep_ixs]
-            images = [im for i, im in enumerate(self.__images) if i in keep_ixs]
-            shapes = [s for i, s in enumerate(self.__shapes) if i in keep_ixs]
-            tls = [t for i, t in enumerate(self.__tls) if i in keep_ixs]
-            bboxes = [b for i, b in enumerate(new_bboxs) if i in keep_ixs]
-
-            # update class_ids, images, shapes, tls. only index
-            self.__class_ids = cls
-            self.__images = images
-            self.__shapes = shapes
-            self.__tls = tls
-            # update bboxs. index and location
-            self.__bboxes = bboxes
-        else:
-            #update bboxs location
-            self.__bboxes = new_bboxs
+        self.__bboxes = new_bboxs
 
     def __generate_image(self):
         bg_im = self.__bg
-        bg_im = cv2.resize(bg_im, (self.__im_h, self.__im_w))#归一化到统一大小
+        bg_im = cv2.resize(bg_im, (self.__im_w, self.__im_h))#归一化到统一大小
         new_shapes = []
         for image, shape, tl in zip(self.__images, self.__shapes, self.__tls):
             #update bg
@@ -357,6 +424,7 @@ class Sample(object):
             mask = self.__draw_mask(mask, shape)
             mask_index = np.where(mask>0)
             bg_im[mask_index[0]+tl[1], mask_index[1]+tl[0], :] = image[mask_index[0], mask_index[1],:]
+
 
             # update shape
             n_shape = []
@@ -392,10 +460,12 @@ class Sample(object):
             cls = [c for i, c in enumerate(self.__class_ids) if i in keep_ixs]
             new_masks = [m for i, m in enumerate(masks) if i in keep_ixs]
             tls = [t for i, t in enumerate(self.__tls) if i in keep_ixs]
+            new_shapes = [q for i, q in enumerate(self.__shapes) if i in keep_ixs]
             # update class_ids, shapes, tls. mask, bboxes only index
             self.__class_ids = cls
             self.__masks = new_masks
             self.__tls = tls
+            self.__newshapes = new_shapes
 
             def __from_mask_update_info(masks, keep_ixs):
                 # 这里把shape和box统一了.....因为从mask上不好寻找这几个点
@@ -422,10 +492,10 @@ class Sample(object):
         alpha = cfg.Image_alpha + np.random.uniform()
         beta = np.random.randint(0, cfg.Image_beta)
         dst = cv2.addWeighted(self.__sample, alpha, blank, 1 - alpha, beta)
-        image1 = cv2.cvtColor(dst, cv2.COLOR_BGR2HSV)
+        image1 = cv2.cvtColor(dst, cv2.COLOR_RGB2HSV)
         random_bright = cfg.Image_alpha + np.random.uniform()
         image1[:, :, 0] = image1[:, :, 0] * random_bright
-        image1 = cv2.cvtColor(image1, cv2.COLOR_HSV2BGR)
+        image1 = cv2.cvtColor(image1, cv2.COLOR_HSV2RGB)
         self.__sample = image1
         return self.__sample
 
@@ -451,6 +521,9 @@ class Sample(object):
     def get_sample(self):
         self.generate_ann()
         return self.__sample, self.__anns, self.__masks
+
+    def get_newshapes(self):
+        return self.__newshapes
     #############################################
     #tool function
     #############################################
@@ -497,12 +570,12 @@ class Sample(object):
     def __random_location(self):
         tls = []
         for bbox in self.__bboxes:
-            tl_x = np.random.randint(0, (self.__im_w - bbox[2] - 1))
-            tl_y = np.random.randint(0, (self.__im_h - bbox[3] - 1))
+            tl_x = np.random.randint(0, max(self.__im_w - bbox[2] - 10, 0))
+            tl_y = np.random.randint(0, max(self.__im_h - bbox[3] - 10, 0))
             tls.append(np.array([tl_x, tl_y]))
         self.__tls = tls
 
-    def __shapes2points(self, shapes):
+    def __shapes2points(self, shapes):  #shapes[x1 y1 x2 y2 x3 y3 x4 y4]
         points = []
         for shape in shapes:
             shape = np.array(shape)
@@ -530,7 +603,7 @@ class Sample(object):
         im = self.__sample
         masks = im
         for ann, mask, bbox, class_id in zip(self.__anns, self.__masks, self.__bboxes, self.__class_ids):
-            cv2.rectangle(im, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (208, 220, 0), 3)
+            cv2.rectangle(im, ann[1][0], ann[1][2], (208, 220, 0), 3)
             for p in ann[1]:
                 cv2.circle(im, p, 10, (0, 255, 0), -1)
             cv2.putText(im, self.__classname_list[class_id], ann[1][0],
@@ -548,8 +621,8 @@ class Generate(cfg):
         self.__foreground = seed_fg(self.fg_list, self.dataset_classes_name)
         self.__background = seed_bg(self.bg_list)
         self.__sample = Sample(self.Image_height, self.Image_width, self.dataset_classes_name)
-        self.__show_data_info()
-        self.__set_out_path()
+        # self.__show_data_info()
+        # self.__set_out_path()
 
     #创建Image,Annotation,mask的输出路径
     def __set_out_path(self):
@@ -583,33 +656,36 @@ class Generate(cfg):
 
 
     @func_timer
-    def __generate_example(self):
+    def __generate_example(self,n):
         #获得图片,类别索引,ann以及bg_image信息
 
-        images, class_ids, shapes = self.__foreground.interpret_example_all_class(self.Image_objects)
+        images, class_ids, shapes = self.__foreground.interpret_example_all_class(self.Image_objects,n)
         bg_image = self.__background.interpret_background(self.Image_background)
 
         #生成新的图片,输出图片,anns,masks信息
         self.__sample.set_object_info(images, class_ids, shapes, bg_image)
         sample, anns, masks = self.__sample.get_sample()
+        new_shapes = self.__sample.get_newshapes()
         #self.__sample.show_sample()
-        return (sample, anns, masks)
+        return (sample, anns, masks, new_shapes)
 
     @func_timer
-    def __generate_example_one_class(self, bshape):
+    def __generate_example_one_class(self, bshape,n):
         # 获得图片,类别索引,ann以及bg_image信息
         # for bshape in self.dataset_classes_name:
-            images, class_ids, shapes = self.__foreground.interpret_example_class(bshape, self.Image_objects)
+            images, class_ids, shapes = self.__foreground.interpret_example_class(bshape, self.Image_objects,n)
             bg_image = self.__background.interpret_background(self.Image_background)
 
             # 生成新的图片,输出图片,anns,masks信息
             self.__sample.set_object_info(images, class_ids, shapes, bg_image)
             sample, anns, masks = self.__sample.get_sample()
-            # self.__sample.show_sample()
-            return (sample, anns, masks)
+            new_shapes = self.__sample.get_newshapes()
+
+            #self.__sample.show_sample()
+            return (sample, anns, masks, new_shapes)
 
     #保存生成的图片,标签,掩码信息
-    def __save_generate_example(self, dataset_id):
+    def __save_voc_example(self, dataset_id):
         #image
         (sample, anns, masks) = self.__generate_example()
         #(sample, anns, masks) = self.__generate_example_one_class()
@@ -637,7 +713,7 @@ class Generate(cfg):
 
 
 
-    def generate_dataset_one_class(self):
+    def save_voc_one_class(self):
         for i in range(self.Image_num):
             for bshape in self.dataset_classes_name:
                 images, class_ids, shapes = self.__foreground.interpret_example_class(bshape, self.Image_objects)
@@ -671,21 +747,36 @@ class Generate(cfg):
                     cv2.imwrite(ma_path, mask)
                     n += 1
 
+    def __save_coco_example(self, dataset_id):
+        (sample, anns, masks, new_shapes) = self.__generate_example()
+        fimage = os.path.join(self.image_path, "%06d" % dataset_id + '.jpg')
+        cv2.imwrite(fimage, sample)
+        image_name = os.path.join(self.xml_path, "%06d" % dataset_id + '.json')
+        id = "%06d" % dataset_id
+        COCOWrite(image_name, id, anns, masks, new_shapes, self.Image_height, self.Image_width,
+                  self.dataset_classes_name)
+        print("this is No.%06d" % dataset_id)
+
 
     #生成多张新图,并保存
-    def generate_dataset(self):
+    def voc_api(self):
         for i in range(self.Image_num):
-            self.__save_generate_example(i)
+            self.__save_voc_example(i)
+
+    def coco_api(self):
+        for i in range(self.Image_num):
+            self.__save_coco_example(i)
 
 
     #生成一张新图,返回图片,标签,掩码
-    def generate_an_example(self):
-        return self.__generate_example()
+    def generate_an_example(self,n):
+        return self.__generate_example(n)
 
-    def generate_an_example_one_class(self, bshape):
-        return self.__generate_example_one_class(bshape)
+    def generate_an_example_one_class(self, bshape,n):
+        return self.__generate_example_one_class(bshape,n)
 
 if __name__ == '__main__':
     gen = Generate()
-    gen.generate_dataset()
-    gen.generate_dataset_one_class()
+    gen.voc_api()
+
+    #gen.save_voc_one_class()

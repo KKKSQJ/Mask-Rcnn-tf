@@ -19,10 +19,10 @@ def convert(box):
     return (box[0],box[2], box[1], box[2], box[0], box[3], box[1], box[3])
 
 def gen_labels():
-    cwd = os.getcwd()
-    #cwd = '/home/kingqi/proj/data/mask-rcnn'
-    ann_dir = os.path.join(cwd, "express_data", 'Annotations')
-    labels = os.path.join(cwd, "express_data", 'labels')
+    #cwd = os.getcwd()
+    cwd = '/home/kingqi/proj/data/mask-rcnn/train_data/20190401_express'
+    ann_dir = os.path.join(cwd, 'Annotations')
+    labels = os.path.join(cwd, 'labels')
     if not os.path.exists(labels):
             os.makedirs(labels)
     for walk in os.walk(ann_dir):
